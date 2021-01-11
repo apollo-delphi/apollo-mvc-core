@@ -1,4 +1,4 @@
-// v.1.0
+// last commit
 unit Apollo_MVC_Core;
 
 interface
