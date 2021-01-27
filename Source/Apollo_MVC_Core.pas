@@ -1,18 +1,27 @@
-// last commit
 unit Apollo_MVC_Core;
 
 interface
 
 type
-  TModelAbstract = class abstract
+  IController = interface
+  ['{27228C42-8BD8-4201-8DAA-798EC0098F63}']
   end;
 
-  TView = class
+  TController = class(TInterfacedObject, IController)
   end;
 
-  TControllerAbstract = class abstract
+  TControllerClass = class of TController;
+
+  TMVCService = record
+    procedure RegisterController(aControllerClass: TControllerClass);
   end;
 
 implementation
+
+{ TMVCService }
+
+procedure TMVCService.RegisterController(aControllerClass: TControllerClass);
+begin
+end;
 
 end.
