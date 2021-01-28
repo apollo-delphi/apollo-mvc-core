@@ -1,4 +1,4 @@
-unit tst_Apollo_MVC_Core;
+unit tstApollo_MVC_Core;
 
 interface
 

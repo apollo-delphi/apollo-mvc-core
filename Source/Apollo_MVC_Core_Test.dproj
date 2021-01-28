@@ -89,7 +89,7 @@
         <DelphiCompile Include="$(MainSource)">
             <MainSource>MainSource</MainSource>
         </DelphiCompile>
-        <DCCReference Include="tst_Apollo_MVC_Core.pas"/>
+        <DCCReference Include="tstApollo_MVC_Core.pas"/>
         <DCCReference Include="Apollo_MVC_Core.pas"/>
         <BuildConfiguration Include="Release">
             <Key>Cfg_2</Key>

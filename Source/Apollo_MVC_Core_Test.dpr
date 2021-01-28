@@ -7,7 +7,7 @@ uses
   DUnitX.Loggers.GUI.VCL,
   DUnitX.Loggers.Xml.NUnit,
   DUnitX.TestFramework,
-  tst_Apollo_MVC_Core in 'tst_Apollo_MVC_Core.pas',
+  tstApollo_MVC_Core in 'tstApollo_MVC_Core.pas',
   Apollo_MVC_Core in 'Apollo_MVC_Core.pas';
 
 begin
