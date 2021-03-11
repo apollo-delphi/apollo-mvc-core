@@ -7,14 +7,16 @@ uses
   System.Generics.Collections;
 
 type
-  IModelOutput = interface
+  IModelIO = interface
   ['{BC1D1100-7593-4AAF-BADE-68902C480EA2}']
-    function AddObject(const aIndex: Integer; aObject: TObject): IModelOutput;
+    function Add(const aIndex: Integer; aValue: Variant): IModelIO;
+    function AddObject(const aIndex: Integer; aObject: TObject): IModelIO;
+    function Get(const aIndex: Integer): Variant;
     function GetObject(const aIndex: Integer): TObject;
   end;
 
   TControllerAbstract = class;
-  TModelEventProc = procedure(const aEventName: string; aOutput: IModelOutput) of object;
+  TModelEventProc = procedure(const aEventName: string; aOutput: IModelIO) of object;
   TViewEventProc = procedure(const aEventName: string; aView: TObject) of object;
 
   IModel = interface
@@ -26,11 +28,12 @@ type
   private
     FEventProc: TModelEventProc;
   protected
-    function NewOutput: IModelOutput;
-    procedure FireEvent(const aEventName: string; aOutput: IModelOutput);
+    FInput: IModelIO;
+    function NewOutput: IModelIO;
+    procedure FireEvent(const aEventName: string; aOutput: IModelIO);
     procedure Start; virtual; abstract;
   public
-    constructor CreateByController(aModelEventProc: TModelEventProc);
+    constructor CreateByController(aInput: IModelIO; aModelEventProc: TModelEventProc);
   end;
 
   IViewBase = interface
@@ -65,12 +68,14 @@ type
     function ExtractFromStorage(const aKey: string): TObject;
     function GetFromStorage(const aKey: string): TObject;
     function GetView<T: TComponent>: T;
+    function NewInput: IModelIO;
     procedure AfterCreate; virtual;
     procedure BeforeDestroy; virtual;
-    procedure CallModel<T: TModelAbstract, constructor>(aThreadCount: Integer = 1);
+    procedure CallModel<T: TModelAbstract, constructor>(aInput: IModelIO; aThreadCount: Integer = 1); overload;
+    procedure CallModel<T: TModelAbstract, constructor>(aThreadCount: Integer = 1); overload;
     procedure PutToStorage(const aKey: string; aObject: TObject);
   public
-    procedure ModelEventsObserver(const aEventName: string; aOutput: IModelOutput);
+    procedure ModelEventsObserver(const aEventName: string; aOutput: IModelIO);
     procedure ViewEventsObserver(const aEventName: string; aView: TObject);
     constructor Create;
     destructor Destroy; override;
@@ -83,13 +88,16 @@ implementation
   System.Threading;
 
 type
-  TModelEventHandleProc = procedure(aOutput: IModelOutput) of object;
+  TModelEventHandleProc = procedure(aOutput: IModelIO) of object;
   TViewEventHandleProc = procedure(aView: TObject) of object;
 
-  TModelOutput = class(TInterfacedObject, IModelOutput)
+  TModelIO = class(TInterfacedObject, IModelIO)
   strict private
     FObjects: TObjectDictionary<Integer, TObject>;
-    function AddObject(const aIndex: Integer; aObject: TObject): IModelOutput;
+    FValues: TDictionary<Integer, Variant>;
+    function Add(const aIndex: Integer; aValue: Variant): IModelIO;
+    function AddObject(const aIndex: Integer; aObject: TObject): IModelIO;
+    function Get(const aIndex: Integer): Variant;
     function GetObject(const aIndex: Integer): TObject;
     procedure AfterConstruction; override;
     procedure BeforeDestruction; override;
@@ -97,19 +105,20 @@ type
 
 { TModelAbstract }
 
-constructor TModelAbstract.CreateByController(aModelEventProc: TModelEventProc);
+constructor TModelAbstract.CreateByController(aInput: IModelIO; aModelEventProc: TModelEventProc);
 begin
+  FInput := aInput;
   FEventProc := aModelEventProc;
 end;
 
-procedure TModelAbstract.FireEvent(const aEventName: string; aOutput: IModelOutput);
+procedure TModelAbstract.FireEvent(const aEventName: string; aOutput: IModelIO);
 begin
   FEventProc(aEventName, aOutput);
 end;
 
-function TModelAbstract.NewOutput: IModelOutput;
+function TModelAbstract.NewOutput: IModelIO;
 begin
-  Result := TModelOutput.Create;
+  Result := TModelIO.Create;
 end;
 
 { TControllerAbstract }
@@ -123,6 +132,12 @@ begin
 end;
 
 procedure TControllerAbstract.CallModel<T>(aThreadCount: Integer = 1);
+begin
+  CallModel<T>(nil, aThreadCount);
+end;
+
+procedure TControllerAbstract.CallModel<T>(aInput: IModelIO;
+  aThreadCount: Integer);
 var
   i: Integer;
   Model: IModel;
@@ -130,7 +145,7 @@ var
 begin
   for i := 0 to aThreadCount - 1 do
   begin
-    Model := T.CreateByController(ModelEventsObserver);
+    Model := T.CreateByController(aInput, ModelEventsObserver);
     Task := TTask.Create(procedure()
       begin
         Model.Start
@@ -183,7 +198,7 @@ begin
 end;
 
 procedure TControllerAbstract.ModelEventsObserver(const aEventName: string;
-  aOutput: IModelOutput);
+  aOutput: IModelIO);
 var
   ModelEventHandleProc: TModelEventHandleProc;
 begin
@@ -198,6 +213,11 @@ begin
       ModelEventHandleProc(aOutput);
     end
   );
+end;
+
+function TControllerAbstract.NewInput: IModelIO;
+begin
+  Result := TModelIO.Create;
 end;
 
 procedure TControllerAbstract.PutToStorage(const aKey: string; aObject: TObject);
@@ -241,30 +261,43 @@ begin
   FEventProc := aValue;
 end;
 
-{ TModelOutput }
+{ TModelIO }
 
-function TModelOutput.AddObject(const aIndex: Integer;
-  aObject: TObject): IModelOutput;
+function TModelIO.Add(const aIndex: Integer; aValue: Variant): IModelIO;
+begin
+  FValues.Add(aIndex, aValue);
+  Result := Self;
+end;
+
+function TModelIO.AddObject(const aIndex: Integer;
+  aObject: TObject): IModelIO;
 begin
   FObjects.Add(aIndex, aObject);
   Result := Self;
 end;
 
-procedure TModelOutput.AfterConstruction;
+procedure TModelIO.AfterConstruction;
 begin
   inherited;
 
   FObjects := TObjectDictionary<Integer, TObject>.Create;
+  FValues := TDictionary<Integer, Variant>.Create;
 end;
 
-procedure TModelOutput.BeforeDestruction;
+procedure TModelIO.BeforeDestruction;
 begin
   inherited;
 
   FObjects.Free;
+  FValues.Free;
 end;
 
-function TModelOutput.GetObject(const aIndex: Integer): TObject;
+function TModelIO.Get(const aIndex: Integer): Variant;
+begin
+  Result := FValues.Items[aIndex];
+end;
+
+function TModelIO.GetObject(const aIndex: Integer): TObject;
 begin
   Result := FObjects.Items[aIndex];
 end;
