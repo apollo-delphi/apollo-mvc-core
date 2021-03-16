@@ -44,22 +44,6 @@ type
     property EventProc: TViewEventProc read GetEventProc write SetEventProc;
   end;
 
-  IViewMain = interface
-  ['{74EC0641-006A-4ED6-97A8-16DFA889EC75}']
-    function SubscribeController: TControllerAbstract;
-  end;
-
-  TViewBase = class(TInterfacedObject, IViewBase)
-  private
-    FEventProc: TViewEventProc;
-    FView: TObject;
-    function GetEventProc: TViewEventProc;
-    procedure FireEvent(const aEventName: string);
-    procedure SetEventProc(aValue: TViewEventProc);
-  public
-    constructor Create(aView: TObject);
-  end;
-
   TControllerAbstract = class abstract
   private
     FObjectStorage: TObjectDictionary<string, TObject>;
@@ -81,6 +65,8 @@ type
     destructor Destroy; override;
   end;
 
+  function MakeViewBase(aOwner: TObject): IViewBase;
+
 implementation
 
 uses
@@ -88,6 +74,17 @@ implementation
   System.Threading;
 
 type
+  TViewBase = class(TInterfacedObject, IViewBase)
+  private
+    FEventProc: TViewEventProc;
+    FView: TObject;
+    function GetEventProc: TViewEventProc;
+    procedure FireEvent(const aEventName: string);
+    procedure SetEventProc(aValue: TViewEventProc);
+  public
+    constructor Create(aView: TObject);
+  end;
+
   TModelEventHandleProc = procedure(aOutput: IModelIO) of object;
   TViewEventHandleProc = procedure(aView: TObject) of object;
 
@@ -102,6 +99,11 @@ type
     procedure AfterConstruction; override;
     procedure BeforeDestruction; override;
   end;
+
+function MakeViewBase(aOwner: TObject): IViewBase;
+begin
+  Result := TViewBase.Create(aOwner);
+end;
 
 { TModelAbstract }
 
