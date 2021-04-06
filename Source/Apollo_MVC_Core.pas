@@ -3,6 +3,7 @@ unit Apollo_MVC_Core;
 interface
 
 uses
+  Apollo_Types,
   System.Classes,
   System.Generics.Collections;
 
@@ -18,23 +19,33 @@ type
   TControllerAbstract = class;
   TModelEventProc = procedure(const aEventName: string; aOutput: IModelIO) of object;
   TViewEventProc = procedure(const aEventName: string; aView: TObject) of object;
+  TFreeNotificationSubscriber = procedure(aFreeNotificationProc: TSimpleMethod) of object;
 
   IModel = interface
   ['{37C50BE9-755C-4827-871A-9F812F7169E8}']
+    procedure Cancel;
     procedure Start;
   end;
 
   TModelAbstract = class abstract(TInterfacedObject, IModel)
   private
     FEventProc: TModelEventProc;
+    procedure Cancel;
+    procedure OnControllerDestroy;
   protected
+    FCancelled: Boolean;
     FInput: IModelIO;
     function NewOutput: IModelIO;
+    procedure CheckCancel;
     procedure FireEvent(const aEventName: string; aOutput: IModelIO);
+    procedure OnCancel; virtual;
     procedure Start; virtual; abstract;
   public
-    constructor CreateByController(aInput: IModelIO; aModelEventProc: TModelEventProc);
+    constructor CreateByController(aInput: IModelIO; aModelEventProc: TModelEventProc;
+      aFreeNotificationSubscriber: TFreeNotificationSubscriber);
   end;
+
+  TModelClass = class of TModelAbstract;
 
   IViewBase = interface
   ['{DFCD4E01-FA56-4205-98A2-5CA0980651BB}']
@@ -44,15 +55,29 @@ type
     property EventProc: TViewEventProc read GetEventProc write SetEventProc;
   end;
 
+  TModelItem = record
+    Index: Integer;
+    Model: IModel;
+    ModelClass: TModelClass;
+  end;
+
+  TModelsHelper = record helper for TArray<TModelItem>
+    procedure Add(aModel: IModel; aModelClass: TModelClass; const aIndex: Integer);
+  end;
+
   TControllerAbstract = class abstract
   private
+    FFreeNotifications: TSimpleMethods;
+    FModels: TArray<TModelItem>;
     FObjectStorage: TObjectDictionary<string, TObject>;
+    procedure FreeNotificationSubscriber(aFreeNotificationProc: TSimpleMethod);
   protected
     FViews: TObjectDictionary<TClass, TComponent>;
     function ExtractFromStorage(const aKey: string): TObject;
-    function GetFromStorage(const aKey: string): TObject;
+    function GetFromStorage<T: class>(const aKey: string): T;
     function GetView<T: TComponent>: T;
     function NewInput: IModelIO;
+    function TryGetModel<T: TModelAbstract>(out aModel: IModel; const aIndex: Integer = 0): Boolean;
     procedure AfterCreate; virtual;
     procedure BeforeDestroy; virtual;
     procedure CallModel<T: TModelAbstract, constructor>(aInput: IModelIO; aThreadCount: Integer = 1); overload;
@@ -107,20 +132,46 @@ end;
 
 { TModelAbstract }
 
-constructor TModelAbstract.CreateByController(aInput: IModelIO; aModelEventProc: TModelEventProc);
+procedure TModelAbstract.Cancel;
+begin
+  FCancelled := True;
+end;
+
+constructor TModelAbstract.CreateByController(aInput: IModelIO; aModelEventProc: TModelEventProc;
+  aFreeNotificationSubscriber: TFreeNotificationSubscriber);
 begin
   FInput := aInput;
   FEventProc := aModelEventProc;
+  aFreeNotificationSubscriber(OnControllerDestroy);
 end;
 
 procedure TModelAbstract.FireEvent(const aEventName: string; aOutput: IModelIO);
 begin
-  FEventProc(aEventName, aOutput);
+  if not FCancelled then
+    FEventProc(aEventName, aOutput);
 end;
 
 function TModelAbstract.NewOutput: IModelIO;
 begin
   Result := TModelIO.Create;
+end;
+
+procedure TModelAbstract.OnControllerDestroy;
+begin
+  FCancelled := True;
+end;
+
+procedure TModelAbstract.CheckCancel;
+begin
+  if FCancelled then
+  begin
+    OnCancel;
+    Abort;
+  end;
+end;
+
+procedure TModelAbstract.OnCancel;
+begin
 end;
 
 { TControllerAbstract }
@@ -131,6 +182,7 @@ end;
 
 procedure TControllerAbstract.BeforeDestroy;
 begin
+  FFreeNotifications.Exec;
 end;
 
 procedure TControllerAbstract.CallModel<T>(aThreadCount: Integer = 1);
@@ -147,11 +199,13 @@ var
 begin
   for i := 0 to aThreadCount - 1 do
   begin
-    Model := T.CreateByController(aInput, ModelEventsObserver);
+    Model := T.CreateByController(aInput, ModelEventsObserver, FreeNotificationSubscriber);
     Task := TTask.Create(procedure()
       begin
         Model.Start
       end);
+
+    FModels.Add(Model, T, i);
     Task.Start;
   end;
 end;
@@ -184,9 +238,15 @@ begin
   Result := Pair.Value;
 end;
 
-function TControllerAbstract.GetFromStorage(const aKey: string): TObject;
+procedure TControllerAbstract.FreeNotificationSubscriber(
+  aFreeNotificationProc: TSimpleMethod);
 begin
-  Result := FObjectStorage.Items[aKey];
+  FFreeNotifications.Add(aFreeNotificationProc);
+end;
+
+function TControllerAbstract.GetFromStorage<T>(const aKey: string): T;
+begin
+  Result := FObjectStorage.Items[aKey] as T;
 end;
 
 function TControllerAbstract.GetView<T>: T;
@@ -239,6 +299,20 @@ begin
     ViewEventHandleProc(aView)
   else
     raise Exception.CreateFmt('Controller %s does not implement procedure %s', [ClassName, aEventName]);
+end;
+
+function TControllerAbstract.TryGetModel<T>(out aModel: IModel; const aIndex: Integer = 0): Boolean;
+var
+  ModelItem: TModelItem;
+begin
+  Result := False;
+
+  for ModelItem in FModels do
+    if (ModelItem.ModelClass = T) and (ModelItem.Index = aIndex) then
+    begin
+      aModel := ModelItem.Model;
+      Exit(True);
+    end;
 end;
 
 { TBaseView }
@@ -302,6 +376,19 @@ end;
 function TModelIO.GetObject(const aIndex: Integer): TObject;
 begin
   Result := FObjects.Items[aIndex];
+end;
+
+{TModelsHelper}
+
+procedure TModelsHelper.Add(aModel: IModel; aModelClass: TModelClass; const aIndex: Integer);
+var
+  ModelItem: TModelItem;
+begin
+  ModelItem.Model := aModel;
+  ModelItem.ModelClass := aModelClass;
+  ModelItem.Index := aIndex;
+
+  Self := Self + [ModelItem];
 end;
 
 end.
