@@ -20,6 +20,7 @@ type
   TModelEventProc = procedure(const aEventName: string; aOutput: IModelIO) of object;
   TViewEventProc = procedure(const aEventName: string; aView: TObject) of object;
   TFreeNotificationSubscriber = procedure(aFreeNotificationProc: TSimpleMethod) of object;
+  TRememberEventProc = procedure(aView: TObject; const aPropName: string; const aValue: Variant) of object;
 
   IModel = interface
   ['{37C50BE9-755C-4827-871A-9F812F7169E8}']
@@ -50,9 +51,13 @@ type
   IViewBase = interface
   ['{DFCD4E01-FA56-4205-98A2-5CA0980651BB}']
     function GetEventProc: TViewEventProc;
+    function GetRememberEventProc: TRememberEventProc;
     procedure FireEvent(const aEventName: string);
+    procedure Remember(const aPropName: string; const aValue: Variant);
     procedure SetEventProc(aValue: TViewEventProc);
+    procedure SetRememberEventProc(aValue: TRememberEventProc);
     property EventProc: TViewEventProc read GetEventProc write SetEventProc;
+    property RememberEventProc: TRememberEventProc read GetRememberEventProc write SetRememberEventProc;
   end;
 
   TModelItem = record
@@ -102,10 +107,14 @@ type
   TViewBase = class(TInterfacedObject, IViewBase)
   private
     FEventProc: TViewEventProc;
+    FRememberEventProc: TRememberEventProc;
     FView: TObject;
     function GetEventProc: TViewEventProc;
+    function GetRememberEventProc: TRememberEventProc;
     procedure FireEvent(const aEventName: string);
+    procedure Remember(const aPropName: string; const aValue: Variant);
     procedure SetEventProc(aValue: TViewEventProc);
+    procedure SetRememberEventProc(aValue: TRememberEventProc);
   public
     constructor Create(aView: TObject);
   end;
@@ -335,6 +344,22 @@ end;
 procedure TViewBase.SetEventProc(aValue: TViewEventProc);
 begin
   FEventProc := aValue;
+end;
+
+procedure TViewBase.Remember(const aPropName: string; const aValue: Variant);
+begin
+  if Assigned(FRememberEventProc) then
+    FRememberEventProc(FView, aPropName, aValue);
+end;
+
+function TViewBase.GetRememberEventProc: TRememberEventProc;
+begin
+  Result := FRememberEventProc;
+end;
+
+procedure TViewBase.SetRememberEventProc(aValue: TRememberEventProc);
+begin
+  FRememberEventProc := aValue;
 end;
 
 { TModelIO }
