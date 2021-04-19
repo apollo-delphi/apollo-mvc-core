@@ -78,8 +78,8 @@ type
     procedure FreeNotificationSubscriber(aFreeNotificationProc: TSimpleMethod);
   protected
     FViews: TObjectDictionary<TClass, TComponent>;
-    function ExtractFromStorage<T: class>(const aKey: string): T;
-    function GetFromStorage(const aKey: string): TObject;
+    function ExtractFromStorage(const aKey: string): TObject;
+    function GetFromStorage<T: class>(const aKey: string): T;
     function GetView<T: TComponent>: T;
     function NewInput: IModelIO;
     function TryGetModel<T: TModelAbstract>(out aModel: IModel; const aIndex: Integer = 0): Boolean;
@@ -242,12 +242,12 @@ begin
   inherited;
 end;
 
-function TControllerAbstract.ExtractFromStorage<T>(const aKey: string): T;
+function TControllerAbstract.ExtractFromStorage(const aKey: string): TObject;
 var
   Pair: TPair<string, TObject>;
 begin
   Pair := FObjectStorage.ExtractPair(aKey);
-  Result := Pair.Value as T;
+  Result := Pair.Value;
 end;
 
 procedure TControllerAbstract.FreeNotificationSubscriber(
@@ -256,9 +256,9 @@ begin
   FFreeNotifications.Add(aFreeNotificationProc);
 end;
 
-function TControllerAbstract.GetFromStorage(const aKey: string): TObject;
+function TControllerAbstract.GetFromStorage<T>(const aKey: string): T;
 begin
-  Result := FObjectStorage.Items[aKey];
+  Result := FObjectStorage.Items[aKey] as T;
 end;
 
 function TControllerAbstract.GetView<T>: T;
