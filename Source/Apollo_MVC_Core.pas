@@ -78,15 +78,18 @@ type
     procedure FreeNotificationSubscriber(aFreeNotificationProc: TSimpleMethod);
   protected
     FViews: TObjectDictionary<TClass, TComponent>;
-    function ExtractFromStorage(const aKey: string): TObject;
-    function GetFromStorage<T: class>(const aKey: string): T;
+    function ExtractFromStorage<T: class>(const aKey: string): T;
+    function GetFromStorage(const aKey: string): TObject;
     function GetView<T: TComponent>: T;
     function NewInput: IModelIO;
     function TryGetModel<T: TModelAbstract>(out aModel: IModel; const aIndex: Integer = 0): Boolean;
+    function TryGetFromStorage<T: class>(const aKey: string; out aValue: T): Boolean;
     procedure AfterCreate; virtual;
     procedure BeforeDestroy; virtual;
     procedure CallModel<T: TModelAbstract, constructor>(aInput: IModelIO; aThreadCount: Integer = 1); overload;
     procedure CallModel<T: TModelAbstract, constructor>(aThreadCount: Integer = 1); overload;
+    procedure RemoveFromStorage(const aKey: string); overload;
+    procedure RemoveFromStorage(aValue: TObject); overload;
     procedure PutToStorage(const aKey: string; aObject: TObject);
   public
     procedure ModelEventsObserver(const aEventName: string; aOutput: IModelIO);
@@ -239,12 +242,12 @@ begin
   inherited;
 end;
 
-function TControllerAbstract.ExtractFromStorage(const aKey: string): TObject;
+function TControllerAbstract.ExtractFromStorage<T>(const aKey: string): T;
 var
   Pair: TPair<string, TObject>;
 begin
   Pair := FObjectStorage.ExtractPair(aKey);
-  Result := Pair.Value;
+  Result := Pair.Value as T;
 end;
 
 procedure TControllerAbstract.FreeNotificationSubscriber(
@@ -253,9 +256,9 @@ begin
   FFreeNotifications.Add(aFreeNotificationProc);
 end;
 
-function TControllerAbstract.GetFromStorage<T>(const aKey: string): T;
+function TControllerAbstract.GetFromStorage(const aKey: string): TObject;
 begin
-  Result := FObjectStorage.Items[aKey] as T;
+  Result := FObjectStorage.Items[aKey];
 end;
 
 function TControllerAbstract.GetView<T>: T;
@@ -323,6 +326,32 @@ begin
       Exit(True);
     end;
 end;
+
+procedure TControllerAbstract.RemoveFromStorage(const aKey: string);
+begin
+  FObjectStorage.Remove(aKey);
+end;
+
+procedure TControllerAbstract.RemoveFromStorage(aValue: TObject);
+var
+  Pair: TPair<string, TObject>;
+begin
+  for Pair in FObjectStorage do
+    if Pair.Value = aValue then
+    begin
+      RemoveFromStorage(Pair.Key);
+    end;
+end;
+
+function TControllerAbstract.TryGetFromStorage<T>(const aKey: string; out aValue: T): Boolean;
+var
+  Value: TObject;
+begin
+  Result := FObjectStorage.TryGetValue(aKey, Value);
+  if Result then
+    aValue := Value as T;
+end;
+
 
 { TBaseView }
 
