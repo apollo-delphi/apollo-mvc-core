@@ -20,8 +20,8 @@ uses
 
   TControllerAbstract = class;
   TModelEventProc = procedure(const aEventName: string; aOutput: IModelIO) of object;
-  TViewEventProc = procedure(const aEventName: string; aView: TObject) of object;
-  TRememberEventProc = procedure(aView: TObject; const aPropName: string; const aValue: Variant) of object;
+  TViewEventProc = procedure(const aEventName: string; aView: TComponent) of object;
+  TRememberEventProc = procedure(aView: TComponent; const aPropName: string; const aValue: Variant) of object;
 
   IModel = interface
   ['{37C50BE9-755C-4827-871A-9F812F7169E8}']
@@ -52,12 +52,15 @@ uses
   ['{DFCD4E01-FA56-4205-98A2-5CA0980651BB}']
     function GetEventProc: TViewEventProc;
     function GetRememberEventProc: TRememberEventProc;
+    function GetView: TComponent;
     procedure FireEvent(const aEventName: string);
+    procedure Recover(const aPropName: string; aValue: string);
     procedure Remember(const aPropName: string; const aValue: Variant);
     procedure SetEventProc(aValue: TViewEventProc);
     procedure SetRememberEventProc(aValue: TRememberEventProc);
     property EventProc: TViewEventProc read GetEventProc write SetEventProc;
     property RememberEventProc: TRememberEventProc read GetRememberEventProc write SetRememberEventProc;
+    property View: TComponent read GetView;
   end;
 
   TModelItem = record
@@ -78,11 +81,19 @@ uses
   private
     FModels: TArray<TModelItem>;
     FObjectStorage: TObjectDictionary<string, TObject>;
-    procedure ViewClose(aView: TComponent);
-  protected
+    FRememberList: TStringList;
     FViews: TObjectDictionary<TClass, TComponent>;
+    function GetRememberList: TStringList;
+    function GetRowKey(const aViewName, aPropName: string): string;
+    procedure ModelEventsObserver(const aEventName: string; aOutput: IModelIO);
+    procedure RecoverRemembers(aViewBase: IViewBase);
+    procedure ViewClose(aView: TComponent);
+    procedure ViewEventsObserver(const aEventName: string; aView: TComponent);
+    procedure ViewRememberObserver(aView: TComponent; const aPropName: string; const aValue: Variant);
+  protected
     function ExtractFromStorage<T: class>(const aKey: string): T;
     function GetFromStorage<T: class>(const aKey: string): T;
+    function GetRememberFilePath: string; virtual;
     function NewInput: IModelIO;
     function TryGetFromStorage<T: class>(const aKey: string; out aValue: T): Boolean;
     function TryGetModel<T: TModelAbstract>(out aModel: IModel; const aIndex: Integer = 0): Boolean;
@@ -91,37 +102,44 @@ uses
     procedure BeforeDestroy; virtual;
     procedure CallModel<T: TModelAbstract, constructor>(aInput: IModelIO; aThreadCount: Integer = 1); overload;
     procedure CallModel<T: TModelAbstract, constructor>(aThreadCount: Integer = 1); overload;
-    procedure RemoveFromStorage(const aKey: string); overload;
-    procedure RemoveFromStorage(aValue: TObject); overload;
     procedure PutToStorage(const aKey: string; aObject: TObject);
+    procedure RemoveFromStorage(aValue: TObject); overload;
+    procedure RemoveFromStorage(const aKey: string); overload;
   public
-    procedure ModelEventsObserver(const aEventName: string; aOutput: IModelIO);
-    procedure ViewEventsObserver(const aEventName: string; aView: TObject);
+    procedure RegisterView(aViewBase: IViewBase);
     constructor Create;
     destructor Destroy; override;
   end;
 
-  function MakeViewBase(aOwner: TObject): IViewBase;
+const
+  mvcModelDestroy = 'mvcModelDestroy';
+  mvcViewClose = 'mvcViewClose';
+
+  function MakeViewBase(aOwner: TComponent): IViewBase;
 
 implementation
 
 uses
+  System.IOUtils,
+  System.Rtti,
   System.SysUtils;
 
-type
+ type
   TViewBase = class(TInterfacedObject, IViewBase)
   private
     FEventProc: TViewEventProc;
     FRememberEventProc: TRememberEventProc;
-    FView: TObject;
+    FView: TComponent;
     function GetEventProc: TViewEventProc;
     function GetRememberEventProc: TRememberEventProc;
+    function GetView: TComponent;
     procedure FireEvent(const aEventName: string);
+    procedure Recover(const aPropName: string; aValue: string);
     procedure Remember(const aPropName: string; const aValue: Variant);
     procedure SetEventProc(aValue: TViewEventProc);
     procedure SetRememberEventProc(aValue: TRememberEventProc);
   public
-    constructor Create(aView: TObject);
+    constructor Create(aView: TComponent);
   end;
 
   TModelEventHandleProc = procedure(aOutput: IModelIO) of object;
@@ -143,7 +161,7 @@ type
     constructor Create(aModelClassType: TClass);
   end;
 
-function MakeViewBase(aOwner: TObject): IViewBase;
+function MakeViewBase(aOwner: TComponent): IViewBase;
 begin
   Result := TViewBase.Create(aOwner);
 end;
@@ -187,7 +205,7 @@ end;
 
 destructor TModelAbstract.Destroy;
 begin
-  FEventProc('ModelDestroy', NewOutput);
+  FEventProc(mvcModelDestroy, NewOutput);
 
   inherited;
 end;
@@ -250,6 +268,8 @@ destructor TControllerAbstract.Destroy;
 begin
   BeforeDestroy;
 
+  if Assigned(FRememberList) then
+    FRememberList.Free;
   FViews.Free;
   FObjectStorage.Free;
 
@@ -283,7 +303,7 @@ procedure TControllerAbstract.ModelEventsObserver(const aEventName: string;
 var
   ModelEventHandleProc: TModelEventHandleProc;
 begin
-  if aEventName = 'ModelDestroy' then
+  if aEventName = mvcModelDestroy then
   begin
     FModels.Remove(aOutput.ModelClassType);
     Exit;
@@ -313,13 +333,13 @@ begin
 end;
 
 procedure TControllerAbstract.ViewEventsObserver(const aEventName: string;
-  aView: TObject);
+  aView: TComponent);
 var
   ViewEventHandleProc: TViewEventHandleProc;
 begin
-  if aEventName = 'ViewClose' then
+  if aEventName = mvcViewClose then
   begin
-    ViewClose(aView as TComponent);
+    ViewClose(aView);
     Exit;
   end;
 
@@ -376,9 +396,59 @@ begin
   FViews.Remove(aView.ClassType);
 end;
 
+function TControllerAbstract.GetRememberList: TStringList;
+begin
+  if not Assigned(FRememberList) then
+    FRememberList := TStringList.Create;
+
+  Result := FRememberList;
+end;
+
+procedure TControllerAbstract.RegisterView(aViewBase: IViewBase);
+begin
+  FViews.AddOrSetValue(aViewBase.View.ClassType, aViewBase.View);
+
+  RecoverRemembers(aViewBase);
+  aViewBase.EventProc := ViewEventsObserver;
+  aViewBase.RememberEventProc := ViewRememberObserver;
+end;
+
+function TControllerAbstract.GetRememberFilePath: string;
+begin
+  Result := TPath.Combine(GetCurrentDir, 'app.ini');
+end;
+
+procedure TControllerAbstract.ViewRememberObserver(aView: TComponent;
+  const aPropName: string; const aValue: Variant);
+begin
+  GetRememberList.Values[GetRowKey(aView.Name, aPropName)] := aValue;
+  GetRememberList.SaveToFile(GetRememberFilePath);
+end;
+
+function TControllerAbstract.GetRowKey(const aViewName, aPropName: string): string;
+begin
+  Result := Format('%s.%s', [aViewName, aPropName]);
+end;
+
+procedure TControllerAbstract.RecoverRemembers(aViewBase: IViewBase);
+var
+  i: Integer;
+  Key: TArray<string>;
+begin
+  if TFile.Exists(GetRememberFilePath) then
+    GetRememberList.LoadFromFile(GetRememberFilePath);
+
+  for i := 0 to GetRememberList.Count - 1 do
+  begin
+    Key := GetRememberList.KeyNames[i].Split(['.']);
+    if Key[0] = aViewBase.View.Name then
+      aViewBase.Recover(Key[1], GetRememberList.ValueFromIndex[i]);
+  end;
+end;
+
 { TBaseView }
 
-constructor TViewBase.Create(aView: TObject);
+constructor TViewBase.Create(aView: TComponent);
 begin
   FView := aView;
 end;
@@ -404,6 +474,32 @@ begin
     FRememberEventProc(FView, aPropName, aValue);
 end;
 
+procedure TViewBase.Recover(const aPropName: string; aValue: string);
+var
+  RttiContext: TRttiContext;
+  RttiProperty: TRttiProperty;
+  RttiType: TRttiType;
+  Value: TValue;
+begin
+  RttiContext := TRttiContext.Create;
+  try
+    RttiType := RttiContext.GetType(FView.ClassType);
+    RttiProperty := RttiType.GetProperty(aPropName);
+    if Assigned(RttiProperty) then
+    begin
+      case RttiProperty.PropertyType.TypeKind of
+        tkInteger: Value := TValue.From<Integer>(aValue.ToInteger);
+      else
+        Value := TValue.From<string>(aValue);
+      end;
+
+      RttiProperty.SetValue(FView, Value);
+    end;
+  finally
+    RttiContext.Free;
+  end;
+end;
+
 function TViewBase.GetRememberEventProc: TRememberEventProc;
 begin
   Result := FRememberEventProc;
@@ -412,6 +508,11 @@ end;
 procedure TViewBase.SetRememberEventProc(aValue: TRememberEventProc);
 begin
   FRememberEventProc := aValue;
+end;
+
+function TViewBase.GetView: TComponent;
+begin
+  Result := FView;
 end;
 
 { TModelIO }
