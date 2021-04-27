@@ -3,23 +3,24 @@ unit Apollo_MVC_Core;
 interface
 
 uses
-  Apollo_Types,
   System.Classes,
-  System.Generics.Collections;
+  System.Generics.Collections,
+  System.Threading;
 
-type
+ type
   IModelIO = interface
   ['{BC1D1100-7593-4AAF-BADE-68902C480EA2}']
     function Add(const aIndex: Integer; aValue: Variant): IModelIO;
     function AddObject(const aIndex: Integer; aObject: TObject): IModelIO;
     function Get(const aIndex: Integer): Variant;
+    function GetModelClassType: TClass;
     function GetObject(const aIndex: Integer): TObject;
+    property ModelClassType: TClass read GetModelClassType;
   end;
 
   TControllerAbstract = class;
   TModelEventProc = procedure(const aEventName: string; aOutput: IModelIO) of object;
   TViewEventProc = procedure(const aEventName: string; aView: TObject) of object;
-  TFreeNotificationSubscriber = procedure(aFreeNotificationProc: TSimpleMethod) of object;
   TRememberEventProc = procedure(aView: TObject; const aPropName: string; const aValue: Variant) of object;
 
   IModel = interface
@@ -32,7 +33,6 @@ type
   private
     FEventProc: TModelEventProc;
     procedure Cancel;
-    procedure OnControllerDestroy;
   protected
     FCancelled: Boolean;
     FInput: IModelIO;
@@ -42,8 +42,8 @@ type
     procedure OnCancel; virtual;
     procedure Start; virtual; abstract;
   public
-    constructor CreateByController(aInput: IModelIO; aModelEventProc: TModelEventProc;
-      aFreeNotificationSubscriber: TFreeNotificationSubscriber);
+    constructor CreateByController(aInput: IModelIO; aModelEventProc: TModelEventProc);
+    destructor Destroy; override;
   end;
 
   TModelClass = class of TModelAbstract;
@@ -62,28 +62,31 @@ type
 
   TModelItem = record
     Index: Integer;
-    Model: IModel;
+    [weak] Model: IModel;
     ModelClass: TModelClass;
+    [weak] Task: ITask;
   end;
 
   TModelsHelper = record helper for TArray<TModelItem>
-    procedure Add(aModel: IModel; aModelClass: TModelClass; const aIndex: Integer);
+    function GetTasks: TArray<ITask>;
+    procedure Add(aModel: IModel; aModelClass: TModelClass; const aIndex: Integer; aTask: ITask);
+    procedure CancelAll;
+    procedure Remove(aModelClass: TClass);
   end;
 
   TControllerAbstract = class abstract
   private
-    FFreeNotifications: TSimpleMethods;
     FModels: TArray<TModelItem>;
     FObjectStorage: TObjectDictionary<string, TObject>;
-    procedure FreeNotificationSubscriber(aFreeNotificationProc: TSimpleMethod);
+    procedure ViewClose(aView: TComponent);
   protected
     FViews: TObjectDictionary<TClass, TComponent>;
-    function ExtractFromStorage(const aKey: string): TObject;
+    function ExtractFromStorage<T: class>(const aKey: string): T;
     function GetFromStorage<T: class>(const aKey: string): T;
-    function GetView<T: TComponent>: T;
     function NewInput: IModelIO;
-    function TryGetModel<T: TModelAbstract>(out aModel: IModel; const aIndex: Integer = 0): Boolean;
     function TryGetFromStorage<T: class>(const aKey: string; out aValue: T): Boolean;
+    function TryGetModel<T: TModelAbstract>(out aModel: IModel; const aIndex: Integer = 0): Boolean;
+    function TryGetView<T: TComponent>(out aView: T): Boolean;
     procedure AfterCreate; virtual;
     procedure BeforeDestroy; virtual;
     procedure CallModel<T: TModelAbstract, constructor>(aInput: IModelIO; aThreadCount: Integer = 1); overload;
@@ -103,8 +106,7 @@ type
 implementation
 
 uses
-  System.SysUtils,
-  System.Threading;
+  System.SysUtils;
 
 type
   TViewBase = class(TInterfacedObject, IViewBase)
@@ -129,12 +131,16 @@ type
   strict private
     FObjects: TObjectDictionary<Integer, TObject>;
     FValues: TDictionary<Integer, Variant>;
+    FModelClassType: TClass;
     function Add(const aIndex: Integer; aValue: Variant): IModelIO;
     function AddObject(const aIndex: Integer; aObject: TObject): IModelIO;
+    function GetModelClassType: TClass;
     function Get(const aIndex: Integer): Variant;
     function GetObject(const aIndex: Integer): TObject;
     procedure AfterConstruction; override;
     procedure BeforeDestruction; override;
+  private
+    constructor Create(aModelClassType: TClass);
   end;
 
 function MakeViewBase(aOwner: TObject): IViewBase;
@@ -149,12 +155,10 @@ begin
   FCancelled := True;
 end;
 
-constructor TModelAbstract.CreateByController(aInput: IModelIO; aModelEventProc: TModelEventProc;
-  aFreeNotificationSubscriber: TFreeNotificationSubscriber);
+constructor TModelAbstract.CreateByController(aInput: IModelIO; aModelEventProc: TModelEventProc);
 begin
   FInput := aInput;
   FEventProc := aModelEventProc;
-  aFreeNotificationSubscriber(OnControllerDestroy);
 end;
 
 procedure TModelAbstract.FireEvent(const aEventName: string; aOutput: IModelIO);
@@ -165,12 +169,7 @@ end;
 
 function TModelAbstract.NewOutput: IModelIO;
 begin
-  Result := TModelIO.Create;
-end;
-
-procedure TModelAbstract.OnControllerDestroy;
-begin
-  FCancelled := True;
+  Result := TModelIO.Create(ClassType);
 end;
 
 procedure TModelAbstract.CheckCancel;
@@ -186,6 +185,13 @@ procedure TModelAbstract.OnCancel;
 begin
 end;
 
+destructor TModelAbstract.Destroy;
+begin
+  FEventProc('ModelDestroy', NewOutput);
+
+  inherited;
+end;
+
 { TControllerAbstract }
 
 procedure TControllerAbstract.AfterCreate;
@@ -194,7 +200,8 @@ end;
 
 procedure TControllerAbstract.BeforeDestroy;
 begin
-  FFreeNotifications.Exec;
+  FModels.CancelAll;
+  TTask.WaitForAll(FModels.GetTasks);
 end;
 
 procedure TControllerAbstract.CallModel<T>(aThreadCount: Integer = 1);
@@ -211,13 +218,20 @@ var
 begin
   for i := 0 to aThreadCount - 1 do
   begin
-    Model := T.CreateByController(aInput, ModelEventsObserver, FreeNotificationSubscriber);
+    Model := T.CreateByController(aInput, ModelEventsObserver);
     Task := TTask.Create(procedure()
       begin
-        Model.Start
-      end);
+        try
+          Model.Start;
+        except
+          on E: EAbort do //do nothing
+        else
+          raise;
+        end;
+      end
+    );
 
-    FModels.Add(Model, T, i);
+    FModels.Add(Model, T, i, Task);
     Task.Start;
   end;
 end;
@@ -242,18 +256,12 @@ begin
   inherited;
 end;
 
-function TControllerAbstract.ExtractFromStorage(const aKey: string): TObject;
+function TControllerAbstract.ExtractFromStorage<T>(const aKey: string): T;
 var
   Pair: TPair<string, TObject>;
 begin
   Pair := FObjectStorage.ExtractPair(aKey);
-  Result := Pair.Value;
-end;
-
-procedure TControllerAbstract.FreeNotificationSubscriber(
-  aFreeNotificationProc: TSimpleMethod);
-begin
-  FFreeNotifications.Add(aFreeNotificationProc);
+  Result := Pair.Value as T;
 end;
 
 function TControllerAbstract.GetFromStorage<T>(const aKey: string): T;
@@ -261,14 +269,13 @@ begin
   Result := FObjectStorage.Items[aKey] as T;
 end;
 
-function TControllerAbstract.GetView<T>: T;
+function TControllerAbstract.TryGetView<T>(out aView: T): Boolean;
 var
   Value: TComponent;
 begin
-  if FViews.TryGetValue(T, Value) then
-    Result := Value as T
-  else
-    raise Exception.CreateFmt('Controller %s View %s closed or did not create', [ClassName, T.ClassName]);
+  Result := FViews.TryGetValue(T, Value);
+  if Result then
+    aView := Value as T;
 end;
 
 procedure TControllerAbstract.ModelEventsObserver(const aEventName: string;
@@ -276,6 +283,12 @@ procedure TControllerAbstract.ModelEventsObserver(const aEventName: string;
 var
   ModelEventHandleProc: TModelEventHandleProc;
 begin
+  if aEventName = 'ModelDestroy' then
+  begin
+    FModels.Remove(aOutput.ModelClassType);
+    Exit;
+  end;
+
   TMethod(ModelEventHandleProc).Code := Self.MethodAddress(aEventName);
   TMethod(ModelEventHandleProc).Data := Self;
 
@@ -291,7 +304,7 @@ end;
 
 function TControllerAbstract.NewInput: IModelIO;
 begin
-  Result := TModelIO.Create;
+  Result := TModelIO.Create(nil);
 end;
 
 procedure TControllerAbstract.PutToStorage(const aKey: string; aObject: TObject);
@@ -304,6 +317,12 @@ procedure TControllerAbstract.ViewEventsObserver(const aEventName: string;
 var
   ViewEventHandleProc: TViewEventHandleProc;
 begin
+  if aEventName = 'ViewClose' then
+  begin
+    ViewClose(aView as TComponent);
+    Exit;
+  end;
+
   TMethod(ViewEventHandleProc).Code := Self.MethodAddress(aEventName);
   TMethod(ViewEventHandleProc).Data := Self;
 
@@ -352,6 +371,10 @@ begin
     aValue := Value as T;
 end;
 
+procedure TControllerAbstract.ViewClose(aView: TComponent);
+begin
+  FViews.Remove(aView.ClassType);
+end;
 
 { TBaseView }
 
@@ -427,22 +450,65 @@ begin
   Result := FValues.Items[aIndex];
 end;
 
+function TModelIO.GetModelClassType: TClass;
+begin
+  Result := FModelClassType;
+end;
+
 function TModelIO.GetObject(const aIndex: Integer): TObject;
 begin
   Result := FObjects.Items[aIndex];
 end;
 
+constructor TModelIO.Create(aModelClassType: TClass);
+begin
+  inherited Create;
+
+  FModelClassType := aModelClassType;
+end;
+
 {TModelsHelper}
 
-procedure TModelsHelper.Add(aModel: IModel; aModelClass: TModelClass; const aIndex: Integer);
+procedure TModelsHelper.Add(aModel: IModel; aModelClass: TModelClass; const aIndex: Integer; aTask: ITask);
 var
   ModelItem: TModelItem;
 begin
   ModelItem.Model := aModel;
   ModelItem.ModelClass := aModelClass;
   ModelItem.Index := aIndex;
+  ModelItem.Task := aTask;
 
   Self := Self + [ModelItem];
+end;
+
+function TModelsHelper.GetTasks: TArray<ITask>;
+var
+  ModelItem: TModelItem;
+begin
+  Result := [];
+
+  for ModelItem in Self do
+    Result := Result + [ModelItem.Task];
+end;
+
+procedure TModelsHelper.Remove(aModelClass: TClass);
+var
+  i: Integer;
+begin
+  for i := 0 to Length(Self) - 1 do
+    if Self[i].ModelClass = aModelClass then
+    begin
+      Delete(Self, i, 1);
+      Exit;
+    end;
+end;
+
+procedure TModelsHelper.CancelAll;
+var
+  ModelItem: TModelItem;
+begin
+  for ModelItem in Self do
+    ModelItem.Model.Cancel;
 end;
 
 end.

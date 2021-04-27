@@ -8,8 +8,7 @@ uses
   DUnitX.Loggers.Xml.NUnit,
   DUnitX.TestFramework,
   tstApollo_MVC_Core in 'tstApollo_MVC_Core.pas',
-  Apollo_MVC_Core in 'Apollo_MVC_Core.pas',
-  Apollo_Types in '..\Vendors\Apollo_Types\Apollo_Types.pas';
+  Apollo_MVC_Core in 'Apollo_MVC_Core.pas';
 
 begin
   Application.Initialize;
