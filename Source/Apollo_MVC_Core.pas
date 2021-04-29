@@ -144,6 +144,7 @@ implementation
 
   TModelEventHandleProc = procedure(aOutput: IModelIO) of object;
   TViewEventHandleProc = procedure(aView: TObject) of object;
+  TViewRecoverProc = procedure(const aPropName: string; aValue: string) of object;
 
   TModelIO = class(TInterfacedObject, IModelIO)
   strict private
@@ -480,6 +481,7 @@ var
   RttiProperty: TRttiProperty;
   RttiType: TRttiType;
   Value: TValue;
+  ViewRecoverProc: TViewRecoverProc;
 begin
   RttiContext := TRttiContext.Create;
   try
@@ -498,6 +500,12 @@ begin
   finally
     RttiContext.Free;
   end;
+
+  TMethod(ViewRecoverProc).Code := FView.MethodAddress('Recover');
+  TMethod(ViewRecoverProc).Data := FView;
+
+  if Assigned(ViewRecoverProc) then
+    ViewRecoverProc(aPropName, aValue);
 end;
 
 function TViewBase.GetRememberEventProc: TRememberEventProc;
