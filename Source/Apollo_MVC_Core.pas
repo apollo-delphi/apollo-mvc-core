@@ -21,6 +21,7 @@ uses
   TControllerAbstract = class;
   TModelEventProc = procedure(const aEventName: string; aOutput: IModelIO) of object;
   TViewEventProc = procedure(const aEventName: string; aView: TComponent) of object;
+  TViewRecoverProc = procedure(const aPropName: string; aValue: string) of object;
   TRememberEventProc = procedure(aView: TComponent; const aPropName: string; const aValue: Variant) of object;
 
   IModel = interface
@@ -51,14 +52,17 @@ uses
   IViewBase = interface
   ['{DFCD4E01-FA56-4205-98A2-5CA0980651BB}']
     function GetEventProc: TViewEventProc;
+    function GetOnRecover: TViewRecoverProc;
     function GetRememberEventProc: TRememberEventProc;
     function GetView: TComponent;
     procedure FireEvent(const aEventName: string);
     procedure Recover(const aPropName: string; aValue: string);
     procedure Remember(const aPropName: string; const aValue: Variant);
     procedure SetEventProc(aValue: TViewEventProc);
+    procedure SetOnRecover(aValue: TViewRecoverProc);
     procedure SetRememberEventProc(aValue: TRememberEventProc);
     property EventProc: TViewEventProc read GetEventProc write SetEventProc;
+    property OnRecover: TViewRecoverProc read GetOnRecover write SetOnRecover;
     property RememberEventProc: TRememberEventProc read GetRememberEventProc write SetRememberEventProc;
     property View: TComponent read GetView;
   end;
@@ -128,15 +132,18 @@ implementation
   TViewBase = class(TInterfacedObject, IViewBase)
   private
     FEventProc: TViewEventProc;
+    FOnRecover: TViewRecoverProc;
     FRememberEventProc: TRememberEventProc;
     FView: TComponent;
     function GetEventProc: TViewEventProc;
+    function GetOnRecover: TViewRecoverProc;
     function GetRememberEventProc: TRememberEventProc;
     function GetView: TComponent;
     procedure FireEvent(const aEventName: string);
     procedure Recover(const aPropName: string; aValue: string);
     procedure Remember(const aPropName: string; const aValue: Variant);
     procedure SetEventProc(aValue: TViewEventProc);
+    procedure SetOnRecover(aValue: TViewRecoverProc);
     procedure SetRememberEventProc(aValue: TRememberEventProc);
   public
     constructor Create(aView: TComponent);
@@ -144,7 +151,6 @@ implementation
 
   TModelEventHandleProc = procedure(aOutput: IModelIO) of object;
   TViewEventHandleProc = procedure(aView: TObject) of object;
-  TViewRecoverProc = procedure(const aPropName: string; aValue: string) of object;
 
   TModelIO = class(TInterfacedObject, IModelIO)
   strict private
@@ -481,7 +487,6 @@ var
   RttiProperty: TRttiProperty;
   RttiType: TRttiType;
   Value: TValue;
-  ViewRecoverProc: TViewRecoverProc;
 begin
   RttiContext := TRttiContext.Create;
   try
@@ -496,16 +501,13 @@ begin
       end;
 
       RttiProperty.SetValue(FView, Value);
+      Exit;
     end;
   finally
     RttiContext.Free;
   end;
 
-  TMethod(ViewRecoverProc).Code := FView.MethodAddress('Recover');
-  TMethod(ViewRecoverProc).Data := FView;
-
-  if Assigned(ViewRecoverProc) then
-    ViewRecoverProc(aPropName, aValue);
+  FOnRecover(aPropName, aValue);
 end;
 
 function TViewBase.GetRememberEventProc: TRememberEventProc;
@@ -521,6 +523,16 @@ end;
 function TViewBase.GetView: TComponent;
 begin
   Result := FView;
+end;
+
+function TViewBase.GetOnRecover: TViewRecoverProc;
+begin
+  Result := FOnRecover;
+end;
+
+procedure TViewBase.SetOnRecover(aValue: TViewRecoverProc);
+begin
+  FOnRecover := aValue;
 end;
 
 { TModelIO }
