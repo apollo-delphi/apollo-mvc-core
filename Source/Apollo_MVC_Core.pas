@@ -95,6 +95,7 @@ uses
     procedure ViewEventsObserver(const aEventName: string; aView: TComponent);
     procedure ViewRememberObserver(aView: TComponent; const aPropName: string; const aValue: Variant);
   protected
+    function CreateView<T: TComponent>: T;
     function ExtractFromStorage<T: class>(const aKey: string): T;
     function GetFromStorage<T: class>(const aKey: string): T;
     function GetRememberFilePath: string; virtual;
@@ -123,7 +124,7 @@ const
 
 implementation
 
-uses
+uses
   System.IOUtils,
   System.Rtti,
   System.SysUtils;
@@ -193,7 +194,7 @@ begin
 end;
 
 function TModelAbstract.NewOutput: IModelIO;
-begin
+begin
   Result := TModelIO.Create(ClassType);
 end;
 
@@ -327,6 +328,18 @@ begin
       ModelEventHandleProc(aOutput);
     end
   );
+end;
+
+function TControllerAbstract.CreateView<T>: T;
+var
+  ViewBase: IViewBase;
+begin
+  Result := T.Create(nil);
+
+  if Result.GetInterface(IViewBase, ViewBase) then
+    RegisterView(ViewBase)
+  else
+    raise Exception.CreateFmt('Create view error, class %s does not implement IViewBase interface', [T.ClassName]);
 end;
 
 function TControllerAbstract.NewInput: IModelIO;
