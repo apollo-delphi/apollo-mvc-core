@@ -127,7 +127,8 @@ implementation
 uses
   System.IOUtils,
   System.Rtti,
-  System.SysUtils;
+  System.SysUtils,
+  System.TypInfo;
 
  type
   TViewBase = class(TInterfacedObject, IViewBase)
@@ -509,6 +510,7 @@ begin
     begin
       case RttiProperty.PropertyType.TypeKind of
         tkInteger: Value := TValue.From<Integer>(aValue.ToInteger);
+        tkEnumeration: Value := TValue.FromOrdinal(RttiProperty.PropertyType.Handle, aValue.ToInteger);
       else
         Value := TValue.From<string>(aValue);
       end;
