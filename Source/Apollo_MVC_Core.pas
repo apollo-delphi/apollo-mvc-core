@@ -19,10 +19,11 @@ uses
   end;
 
   TControllerAbstract = class;
+  TInitProc = procedure of object;
   TModelEventProc = procedure(const aEventName: string; aOutput: IModelIO) of object;
+  TRememberEventProc = procedure(aView: TComponent; const aPropName: string; const aValue: Variant) of object;
   TViewEventProc = procedure(const aEventName: string; aView: TComponent) of object;
   TViewRecoverProc = procedure(const aPropName: string; aValue: string) of object;
-  TRememberEventProc = procedure(aView: TComponent; const aPropName: string; const aValue: Variant) of object;
 
   IModel = interface
   ['{37C50BE9-755C-4827-871A-9F812F7169E8}']
@@ -51,17 +52,25 @@ uses
 
   IViewBase = interface
   ['{DFCD4E01-FA56-4205-98A2-5CA0980651BB}']
+    function EncodeNumProp(const aKey: string; const aNum: Integer): string;
     function GetEventProc: TViewEventProc;
+    function GetOnInitControls: TInitProc;
+    function GetOnInitVariables: TInitProc;
     function GetOnRecover: TViewRecoverProc;
     function GetRememberEventProc: TRememberEventProc;
     function GetView: TComponent;
+    function TryGetNumProp(const aPropName, aKey: string; out aNum: Integer): Boolean;
     procedure FireEvent(const aEventName: string);
     procedure Recover(const aPropName: string; aValue: string);
     procedure Remember(const aPropName: string; const aValue: Variant);
     procedure SetEventProc(aValue: TViewEventProc);
+    procedure SetOnInitControls(aValue: TInitProc);
+    procedure SetOnInitVariables(aValue: TInitProc);
     procedure SetOnRecover(aValue: TViewRecoverProc);
     procedure SetRememberEventProc(aValue: TRememberEventProc);
     property EventProc: TViewEventProc read GetEventProc write SetEventProc;
+    property OnInitControls: TInitProc read GetOnInitControls write SetOnInitControls;
+    property OnInitVariables: TInitProc read GetOnInitVariables write SetOnInitVariables;
     property OnRecover: TViewRecoverProc read GetOnRecover write SetOnRecover;
     property RememberEventProc: TRememberEventProc read GetRememberEventProc write SetRememberEventProc;
     property View: TComponent read GetView;
@@ -134,17 +143,25 @@ uses
   TViewBase = class(TInterfacedObject, IViewBase)
   private
     FEventProc: TViewEventProc;
+    FOnInitControls: TInitProc;
+    FOnInitVariables: TInitProc;
     FOnRecover: TViewRecoverProc;
     FRememberEventProc: TRememberEventProc;
     FView: TComponent;
+    function EncodeNumProp(const aKey: string; const aNum: Integer): string;
     function GetEventProc: TViewEventProc;
+    function GetOnInitControls: TInitProc;
+    function GetOnInitVariables: TInitProc;
     function GetOnRecover: TViewRecoverProc;
     function GetRememberEventProc: TRememberEventProc;
     function GetView: TComponent;
+    function TryGetNumProp(const aPropName, aKey: string; out aNum: Integer): Boolean;
     procedure FireEvent(const aEventName: string);
     procedure Recover(const aPropName: string; aValue: string);
     procedure Remember(const aPropName: string; const aValue: Variant);
     procedure SetEventProc(aValue: TViewEventProc);
+    procedure SetOnInitControls(aValue: TInitProc);
+    procedure SetOnInitVariables(aValue: TInitProc);
     procedure SetOnRecover(aValue: TViewRecoverProc);
     procedure SetRememberEventProc(aValue: TRememberEventProc);
   public
@@ -429,9 +446,11 @@ procedure TControllerAbstract.RegisterView(aViewBase: IViewBase);
 begin
   FViews.AddOrSetValue(aViewBase.View.ClassType, aViewBase.View);
 
+  aViewBase.OnInitVariables;
   RecoverRemembers(aViewBase);
   aViewBase.EventProc := ViewEventsObserver;
   aViewBase.RememberEventProc := ViewRememberObserver;
+  aViewBase.OnInitControls;
 end;
 
 function TControllerAbstract.GetRememberFilePath: string;
@@ -468,6 +487,46 @@ begin
 end;
 
 { TBaseView }
+
+procedure TViewBase.SetOnInitControls(aValue: TInitProc);
+begin
+  FOnInitControls := aValue;
+end;
+
+procedure TViewBase.SetOnInitVariables(aValue: TInitProc);
+begin
+  FOnInitVariables := aValue;
+end;
+
+function TViewBase.GetOnInitControls: TInitProc;
+begin
+  Result := FOnInitControls;
+end;
+
+function TViewBase.GetOnInitVariables: TInitProc;
+begin
+  Result := FOnInitVariables;
+end;
+
+function TViewBase.EncodeNumProp(const aKey: string; const aNum: Integer): string;
+begin
+  Result := Format('%s_%d', [aKey, aNum]);
+end;
+
+function TViewBase.TryGetNumProp(const aPropName, aKey: string; out aNum: Integer): Boolean;
+var
+  Words: TArray<string>;
+begin
+  Result := False;
+
+  Words := aPropName.Split(['_']);
+  if (Length(Words) > 1) and (Words[0] = aKey) then
+  begin
+    aNum := StrToIntDef(Words[High(Words)], -1);
+    if aNum > -1 then
+      Result := True;
+  end;
+end;
 
 constructor TViewBase.Create(aView: TComponent);
 begin
