@@ -7,7 +7,7 @@ uses
   System.Generics.Collections,
   System.Threading;
 
- type
+type
   IModelIO = interface
   ['{BC1D1100-7593-4AAF-BADE-68902C480EA2}']
     function Add(const aIndex: Integer; aValue: Variant): IModelIO;
@@ -23,7 +23,7 @@ uses
   TModelEventProc = procedure(const aEventName: string; aOutput: IModelIO) of object;
   TRememberEventProc = procedure(aView: TComponent; const aPropName: string; const aValue: Variant) of object;
   TViewEventProc = procedure(const aEventName: string; aView: TComponent) of object;
-  TViewRecoverProc = procedure(const aPropName: string; aValue: string) of object;
+  TViewRecoverProc = procedure(const aPropName: string; aValue: Variant) of object;
 
   IModel = interface
   ['{37C50BE9-755C-4827-871A-9F812F7169E8}']
@@ -139,7 +139,7 @@ uses
   System.SysUtils,
   System.TypInfo;
 
- type
+type
   TViewBase = class(TInterfacedObject, IViewBase)
   private
     FEventProc: TViewEventProc;
@@ -556,10 +556,12 @@ end;
 
 procedure TViewBase.Recover(const aPropName: string; aValue: string);
 var
+  IntValue: Integer;
   RttiContext: TRttiContext;
   RttiProperty: TRttiProperty;
   RttiType: TRttiType;
   Value: TValue;
+  VarValue: Variant;
 begin
   RttiContext := TRttiContext.Create;
   try
@@ -581,7 +583,12 @@ begin
     RttiContext.Free;
   end;
 
-  FOnRecover(aPropName, aValue);
+  if TryStrToInt(aValue, {out}IntValue) then
+    VarValue := IntValue
+  else
+    VarValue := aValue;
+
+  FOnRecover(aPropName, VarValue);
 end;
 
 function TViewBase.GetRememberEventProc: TRememberEventProc;
