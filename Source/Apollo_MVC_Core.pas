@@ -92,6 +92,8 @@ type
 
   TControllerAbstract = class abstract
   private
+    FControllers: TObjectList<TControllerAbstract>;
+    FIsMain: Boolean;
     FModels: TArray<TModelItem>;
     FObjectStorage: TObjectDictionary<string, TObject>;
     FRememberList: TStringList;
@@ -121,7 +123,7 @@ type
     procedure RemoveFromStorage(const aKey: string); overload;
   public
     procedure RegisterView(aViewBase: IViewBase);
-    constructor Create;
+    constructor Create(aMainController: TControllerAbstract = nil);
     destructor Destroy; override;
   end;
 
@@ -280,12 +282,19 @@ begin
   end;
 end;
 
-constructor TControllerAbstract.Create;
+constructor TControllerAbstract.Create(aMainController: TControllerAbstract);
 begin
-  inherited;
-
   FViews := TObjectDictionary<TClass, TComponent>.Create;
   FObjectStorage := TObjectDictionary<string, TObject>.Create([doOwnsValues]);
+
+  if Assigned(aMainController) then
+    FControllers := aMainController.FControllers
+  else
+  begin
+    FIsMain := True;
+    FControllers := TObjectList<TControllerAbstract>.Create(False{aOwnsObjects});
+  end;
+  FControllers.Add(Self);
 
   AfterCreate;
 end;
@@ -293,6 +302,9 @@ end;
 destructor TControllerAbstract.Destroy;
 begin
   BeforeDestroy;
+
+  if FIsMain then
+    FControllers.Free;
 
   if Assigned(FRememberList) then
     FRememberList.Free;
@@ -373,6 +385,7 @@ end;
 procedure TControllerAbstract.ViewEventsObserver(const aEventName: string;
   aView: TComponent);
 var
+  Controller: TControllerAbstract;
   ViewEventHandleProc: TViewEventHandleProc;
 begin
   if aEventName = mvcViewClose then
@@ -381,13 +394,19 @@ begin
     Exit;
   end;
 
-  TMethod(ViewEventHandleProc).Code := Self.MethodAddress(aEventName);
-  TMethod(ViewEventHandleProc).Data := Self;
+  for Controller in FControllers do
+  begin
+    TMethod(ViewEventHandleProc).Code := Controller.MethodAddress(aEventName);
+    TMethod(ViewEventHandleProc).Data := Controller;
 
-  if Assigned(ViewEventHandleProc) then
-    ViewEventHandleProc(aView)
-  else
-    raise Exception.CreateFmt('Controller %s does not implement procedure %s', [ClassName, aEventName]);
+    if Assigned(ViewEventHandleProc) then
+    begin
+      ViewEventHandleProc(aView);
+      Exit;
+    end;
+  end;
+
+  raise Exception.CreateFmt('TControllerAbstract.ViewEventsObserver: did not find procedure %s', [aEventName]);
 end;
 
 function TControllerAbstract.TryGetModel<T>(out aModel: IModel; const aIndex: Integer = 0): Boolean;
@@ -405,8 +424,11 @@ begin
 end;
 
 procedure TControllerAbstract.RemoveFromStorage(const aKey: string);
+var
+  Value: TObject;
 begin
-  FObjectStorage.Remove(aKey);
+  if FObjectStorage.TryGetValue(aKey, {out}Value) then
+    FObjectStorage.Remove(aKey);
 end;
 
 procedure TControllerAbstract.RemoveFromStorage(aValue: TObject);
@@ -424,7 +446,7 @@ function TControllerAbstract.TryGetFromStorage<T>(const aKey: string; out aValue
 var
   Value: TObject;
 begin
-  Result := FObjectStorage.TryGetValue(aKey, Value);
+  Result := FObjectStorage.TryGetValue(aKey, {out}Value);
   if Result then
     aValue := Value as T;
 end;
