@@ -102,11 +102,10 @@ type
     function GetRowKey(const aViewName, aPropName: string): string;
     procedure ModelEventsObserver(const aEventName: string; aOutput: IModelIO);
     procedure RecoverRemembers(aViewBase: IViewBase);
-    procedure ViewClose(aView: TComponent);
     procedure ViewEventsObserver(const aEventName: string; aView: TComponent);
     procedure ViewRememberObserver(aView: TComponent; const aPropName: string; const aValue: Variant);
   protected
-    function CreateView<T: TComponent>: T;
+    function CreateView<T: TComponent>(aParentView: TComponent): T;
     function ExtractFromStorage<T: class>(const aKey: string): T;
     function GetFromStorage<T: class>(const aKey: string): T;
     function GetRememberFilePath: string; virtual;
@@ -130,6 +129,8 @@ type
 const
   mvcModelDestroy = 'mvcModelDestroy';
   mvcViewClose = 'mvcViewClose';
+  mvcRegisterFrame = 'mvcRegisterFrame';
+  mvcRemoverFrame = 'mvcRemoveFrame';
 
   function MakeViewBase(aOwner: TComponent): IViewBase;
 
@@ -329,11 +330,19 @@ end;
 
 function TControllerAbstract.TryGetView<T>(out aView: T): Boolean;
 var
+  Controller: TControllerAbstract;
   Value: TComponent;
 begin
-  Result := FViews.TryGetValue(T, Value);
-  if Result then
-    aView := Value as T;
+  Result := False;
+
+  for Controller in FControllers do
+  begin
+    if Controller.FViews.TryGetValue(T, Value) then
+    begin
+      aView := Value as T;
+      Exit(True);
+    end;
+  end;
 end;
 
 procedure TControllerAbstract.ModelEventsObserver(const aEventName: string;
@@ -360,11 +369,11 @@ begin
   );
 end;
 
-function TControllerAbstract.CreateView<T>: T;
+function TControllerAbstract.CreateView<T>(aParentView: TComponent): T;
 var
   ViewBase: IViewBase;
 begin
-  Result := T.Create(nil);
+  Result := T.Create(aParentView);
 
   if Result.GetInterface(IViewBase, ViewBase) then
     RegisterView(ViewBase)
@@ -388,9 +397,17 @@ var
   Controller: TControllerAbstract;
   ViewEventHandleProc: TViewEventHandleProc;
 begin
-  if aEventName = mvcViewClose then
+  if (aEventName = mvcViewClose) or
+     (aEventName = mvcRemoverFrame)
+  then
   begin
-    ViewClose(aView);
+    FViews.Remove(aView.ClassType);
+    Exit;
+  end
+  else
+  if aEventName = mvcRegisterFrame then
+  begin
+    FViews.AddOrSetValue(aView.ClassType, aView);;
     Exit;
   end;
 
@@ -449,11 +466,6 @@ begin
   Result := FObjectStorage.TryGetValue(aKey, {out}Value);
   if Result then
     aValue := Value as T;
-end;
-
-procedure TControllerAbstract.ViewClose(aView: TComponent);
-begin
-  FViews.Remove(aView.ClassType);
 end;
 
 function TControllerAbstract.GetRememberList: TStringList;
