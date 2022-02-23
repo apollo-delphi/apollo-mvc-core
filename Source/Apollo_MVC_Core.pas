@@ -19,6 +19,7 @@ type
   end;
 
   TControllerAbstract = class;
+  TControllerClass = class of TControllerAbstract;
   TInitProc = procedure of object;
   TModelEventProc = procedure(const aEventName: string; aOutput: IModelIO) of object;
   TRememberEventProc = procedure(aView: TComponent; const aPropName: string; const aValue: Variant) of object;
@@ -62,6 +63,7 @@ type
     function TryGetNumProp(const aPropName, aKey: string; out aNum: Integer): Boolean;
     procedure FireEvent(const aEventName: string);
     procedure Recover(const aPropName: string; aValue: string);
+    procedure RegisterInController(aController: TControllerAbstract);
     procedure Remember(const aPropName: string; const aValue: Variant);
     procedure SetEventProc(aValue: TViewEventProc);
     procedure SetOnInitControls(aValue: TInitProc);
@@ -102,6 +104,7 @@ type
     function GetRowKey(const aViewName, aPropName: string): string;
     procedure ModelEventsObserver(const aEventName: string; aOutput: IModelIO);
     procedure RecoverRemembers(aViewBase: IViewBase);
+    procedure RegisterView(aViewBase: IViewBase);
     procedure ViewEventsObserver(const aEventName: string; aView: TComponent);
     procedure ViewRememberObserver(aView: TComponent; const aPropName: string; const aValue: Variant);
   protected
@@ -121,8 +124,8 @@ type
     procedure RemoveFromStorage(aValue: TObject); overload;
     procedure RemoveFromStorage(const aKey: string); overload;
   public
-    procedure RegisterView(aViewBase: IViewBase);
-    constructor Create(aMainController: TControllerAbstract = nil);
+    procedure RegisterChildController(aControllerClass: TControllerClass);
+    constructor Create(const aIsMain: Boolean = True);
     destructor Destroy; override;
   end;
 
@@ -131,6 +134,9 @@ const
   mvcViewClose = 'mvcViewClose';
   mvcRegisterFrame = 'mvcRegisterFrame';
   mvcRemoverFrame = 'mvcRemoveFrame';
+
+var
+  gAllowDirectConstructorForView: Boolean;
 
   function MakeViewBase(aOwner: TComponent): IViewBase;
 
@@ -161,6 +167,7 @@ type
     function TryGetNumProp(const aPropName, aKey: string; out aNum: Integer): Boolean;
     procedure FireEvent(const aEventName: string);
     procedure Recover(const aPropName: string; aValue: string);
+    procedure RegisterInController(aController: TControllerAbstract);
     procedure Remember(const aPropName: string; const aValue: Variant);
     procedure SetEventProc(aValue: TViewEventProc);
     procedure SetOnInitControls(aValue: TInitProc);
@@ -283,29 +290,35 @@ begin
   end;
 end;
 
-constructor TControllerAbstract.Create(aMainController: TControllerAbstract);
+constructor TControllerAbstract.Create(const aIsMain: Boolean);
 begin
+  FIsMain := aIsMain;
+  if FIsMain then
+  begin
+    FControllers := TObjectList<TControllerAbstract>.Create(False{aOwnsObjects});
+    FControllers.Add(Self);
+  end;
+
   FViews := TObjectDictionary<TClass, TComponent>.Create;
   FObjectStorage := TObjectDictionary<string, TObject>.Create([doOwnsValues]);
-
-  if Assigned(aMainController) then
-    FControllers := aMainController.FControllers
-  else
-  begin
-    FIsMain := True;
-    FControllers := TObjectList<TControllerAbstract>.Create(False{aOwnsObjects});
-  end;
-  FControllers.Add(Self);
 
   AfterCreate;
 end;
 
 destructor TControllerAbstract.Destroy;
+var
+  ChildController: TControllerAbstract;
 begin
   BeforeDestroy;
 
   if FIsMain then
+  begin
+    for ChildController in FControllers do
+      if ChildController <> Self then
+        ChildController.Free;
+
     FControllers.Free;
+  end;
 
   if Assigned(FRememberList) then
     FRememberList.Free;
@@ -373,7 +386,12 @@ function TControllerAbstract.CreateView<T>(aParentView: TComponent): T;
 var
   ViewBase: IViewBase;
 begin
-  Result := T.Create(aParentView);
+  gAllowDirectConstructorForView := True;
+  try
+    Result := T.Create(aParentView);
+  finally
+    gAllowDirectConstructorForView := False;
+  end;
 
   if Result.GetInterface(IViewBase, ViewBase) then
     RegisterView(ViewBase)
@@ -520,6 +538,16 @@ begin
   end;
 end;
 
+procedure TControllerAbstract.RegisterChildController(aControllerClass: TControllerClass);
+var
+  ChildController: TControllerAbstract;
+begin
+  ChildController := aControllerClass.Create(False{aIsMain});
+  ChildController.FControllers := FControllers;
+
+  FControllers.Add(ChildController);
+end;
+
 { TBaseView }
 
 procedure TViewBase.SetOnInitControls(aValue: TInitProc);
@@ -586,6 +614,11 @@ procedure TViewBase.Remember(const aPropName: string; const aValue: Variant);
 begin
   if Assigned(FRememberEventProc) then
     FRememberEventProc(FView, aPropName, aValue);
+end;
+
+procedure TViewBase.RegisterInController(aController: TControllerAbstract);
+begin
+  aController.RegisterView(Self);
 end;
 
 procedure TViewBase.Recover(const aPropName: string; aValue: string);
@@ -746,5 +779,8 @@ begin
   for ModelItem in Self do
     ModelItem.Model.Cancel;
 end;
+
+initialization
+  gAllowDirectConstructorForView := False;
 
 end.
