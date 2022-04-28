@@ -40,7 +40,7 @@ type
     FCancelled: Boolean;
     FInput: IModelIO;
     function NewOutput: IModelIO;
-    procedure CheckCancel;
+    procedure CheckCanceled;
     procedure FireEvent(const aEventName: string; aOutput: IModelIO);
     procedure OnCancel; virtual;
     procedure Start; virtual; abstract;
@@ -226,7 +226,7 @@ begin
   Result := TModelIO.Create(ClassType);
 end;
 
-procedure TModelAbstract.CheckCancel;
+procedure TModelAbstract.CheckCanceled;
 begin
   if FCancelled then
   begin
