@@ -42,6 +42,7 @@ type
     function NewOutput: IModelIO;
     procedure CheckCanceled;
     procedure FireEvent(const aEventName: string; aOutput: IModelIO);
+    procedure BeforeDestroy; virtual;
     procedure OnCancel; virtual;
     procedure Start; virtual; abstract;
   public
@@ -239,8 +240,13 @@ procedure TModelAbstract.OnCancel;
 begin
 end;
 
+procedure TModelAbstract.BeforeDestroy;
+begin
+end;
+
 destructor TModelAbstract.Destroy;
 begin
+  BeforeDestroy;
   FEventProc(mvcModelDestroy, NewOutput);
 
   inherited;
